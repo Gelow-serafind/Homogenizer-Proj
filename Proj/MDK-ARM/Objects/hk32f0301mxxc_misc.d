@@ -1,0 +1,29 @@
+./objects/hk32f0301mxxc_misc.o: \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\src\hk32f0301mxxc_misc.c \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_misc.h \
+  ..\..\Libraries\CMSIS\HK32F0301MxxC\Include\hk32f0301mxxc.h \
+  ..\..\Libraries\CMSIS\CM0\Core\core_cm0.h \
+  D:\tiedan\Keil_v5\ARM\ARMCLANG\Bin\..\include\stdint.h \
+  ..\..\Libraries\CMSIS\CM0\Core\core_cmInstr.h \
+  ..\..\Libraries\CMSIS\CM0\Core\cmsis_armcc_V6.h \
+  ..\..\Libraries\CMSIS\CM0\Core\core_cmFunc.h \
+  ..\..\Libraries\CMSIS\HK32F0301MxxC\Include\system_hk32f0301mxxc.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_def.h \
+  D:\tiedan\Keil_v5\ARM\ARMCLANG\Bin\..\include\stdio.h \
+  ..\inc\hk32f0301mxxc_conf.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_rcc.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_crc.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_exti.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_flash.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_gpio.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_adc.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_syscfg.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_i2c.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_iwdg.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_pwr.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_spi.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_tim.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_uart.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_wwdg.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_awut.h \
+  ..\..\Libraries\HK32F0301MxxC_StdPeriph_Driver\inc\hk32f0301mxxc_dbgmcu.h
