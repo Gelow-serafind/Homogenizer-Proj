@@ -5,7 +5,7 @@
 
 > This README is based on the actual logic in `Proj/src/main.c` and has been cleaned of outdated legacy descriptions.
 >
-> This project is a proprietary commercial project owned by Hangzhou Cloudsea Cross-border E-commerce Co., Ltd. It is not open source and is subject to company licensing terms.
+> This project is a proprietary commercial project owned by Hangzhou Cloudvoyage Cross-border E-commerce Co., Ltd. It is not open source and is subject to company licensing terms.
 
 ## Project Overview
 
@@ -151,7 +151,7 @@ Issues and PRs are welcome. Please fork and work on a feature branch, following 
 
 ## License
 
-This project is a proprietary commercial project owned by Hangzhou Cloudsea Cross-border E-commerce Co., Ltd. It is not open source. No rights are granted to copy, modify, distribute, sublicense, or sell this software without prior written permission. See `LICENSE` for details.
+This project is a proprietary commercial project owned by Hangzhou Cloudvoyage Cross-border E-commerce Co., Ltd. It is not open source. No rights are granted to copy, modify, distribute, sublicense, or sell this software without prior written permission. See `LICENSE` for details.
 
 ## Chinese Version
 
