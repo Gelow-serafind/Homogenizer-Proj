@@ -1,6 +1,8 @@
 
 # Homogenizer Controller Project (HK32F0301MF4P7C)
 
+<p align="center"><a href="README.zh-CN.md" style="background-color:#0078d4;color:#ffffff;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:bold;">查看中文说明 / View Chinese README</a></p>
+
 > This README is based on the actual logic in `Proj/src/main.c` and has been cleaned of outdated legacy descriptions.
 >
 > This project is a proprietary commercial project owned by Hangzhou Cloudsea Cross-border E-commerce Co., Ltd. It is not open source and is subject to company licensing terms.
