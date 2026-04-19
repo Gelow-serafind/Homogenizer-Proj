@@ -117,6 +117,7 @@
   - `Libraries/CMSIS/...`
   - `Libraries/HK32F0301MxxC_StdPeriph_Driver/...`
   - `Boards/Board_HK32F0301MF4P7C_EVAL/...`
+- 兼容性说明：`NOP()` 宏的兼容判断在 `Libraries/HK32F0301MxxC_StdPeriph_Driver/inc/hk32f0301mxxc_def.h` 中处理，通过检测 `__ARMCC_VERSION` 避免 ARM Compiler 6 不支持的 `asm("nop")` 写法。
 - 输出文件：`Objects/Project.axf`、`Objects/Project.hex`
 - 支持下载器：ULINK、STLink 等
 

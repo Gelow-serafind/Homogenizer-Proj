@@ -127,6 +127,7 @@ This project implements a homogenizer controller prototype using the HK32F0301MF
   - `Libraries/CMSIS/...`
   - `Libraries/HK32F0301MxxC_StdPeriph_Driver/...`
   - `Boards/Board_HK32F0301MF4P7C_EVAL/...`
+- Compatibility note: `NOP()` macro compatibility for ARM Compiler 6 is handled in `Libraries/HK32F0301MxxC_StdPeriph_Driver/inc/hk32f0301mxxc_def.h` by detecting `__ARMCC_VERSION` and avoiding unsupported `asm("nop")` syntax.
 - Output files: `Objects/Project.axf`, `Objects/Project.hex`
 - Supported programmers: ULINK, STLink, etc.
 
