@@ -1,12 +1,10 @@
 /*******************************************************************************
-* @copyright: Shenzhen Hangshun Chip Technology R&D Co., Ltd
+* @copyright: Hangzhou Cloudvoyage Cross-border E-commerce Co., Ltd.
 * @filename:  main.c
-* @brief:     Main program body - UART Printf + PWM Example
-* @author:    AE Team
-* @version:   V1.1.0/2025-07-16
-*             1.Initial version
-*             2.Added TIM1 PWM functionality (17.57kHz, PWM2 mode, PD1 pin)
-* @log:
+* @brief:     
+* @author:    tiedan
+* @email:    tiedan1026@gmail.com
+* @version:   V1.0/2026.04.19
 *******************************************************************************/
 
 

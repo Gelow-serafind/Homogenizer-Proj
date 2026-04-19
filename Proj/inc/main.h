@@ -1,11 +1,10 @@
 /*******************************************************************************
-* @copyright: Shenzhen Hangshun Chip Technology R&D Co., Ltd
+* @copyright: Hangzhou Cloudvoyage Cross-border E-commerce Co., Ltd.
 * @filename:  main.h
-* @brief:     Main program header - UART Printf + PWM Example
-* @author:    AE Team
-* @version:   V1.1.0/2025-07-16
-*             1.Initial version
-*             2.Added TIM1 PWM functionality declarations
+* @brief:     
+* @author:    tiedan
+* @email:    tiedan1026@gmail.com
+* @version:   V1.0/2026.04.19
 *******************************************************************************/
 
 
