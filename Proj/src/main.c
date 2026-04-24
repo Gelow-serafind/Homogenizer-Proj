@@ -25,6 +25,7 @@
 #define TASK_PERIOD_PRINT_MS   100U
 #define TASK_PERIOD_TM1729_MS  50U
 #define TASK_PERIOD_DEFAULT_MS 1000U
+#define TASK_PERIOD_UART_CMD_MS 2U
 
 /* 业务参数 */
 #define SPEED_STEP_PERCENT     5U
@@ -206,6 +207,41 @@ static uint8_t BlinkVisible = 1U;
 static uint16_t SettingIdleElapsedMs = 0U;
 static uint8_t CountdownExpiredWhileSetting = 0U;
 
+/* UART 命令输入系统 ---------------------------------------------------------*/
+#define UART_RX_RING_SIZE  64U
+#define CMD_LINE_MAX       64U
+
+typedef void (*CmdCallback_t)(const char* args);
+
+typedef struct {
+  const char*    cmd;
+  CmdCallback_t  cb;
+} CmdEntry_t;
+
+static volatile uint8_t  uartRxRing[UART_RX_RING_SIZE];
+static volatile uint8_t  uartRxHead = 0U;
+static volatile uint8_t  uartRxTail = 0U;
+static uint8_t           cmdLineBuf[CMD_LINE_MAX];
+static uint8_t           cmdLineLen = 0U;
+
+/* 注册指令回调函数原型 */
+static void Cmd_Help(const char* args);
+static void Cmd_SetSpeed(const char* args);
+static void Cmd_Start(const char* args);
+static void Cmd_Pause(const char* args);
+static void Cmd_Status(const char* args);
+
+/* 指令表：添加新指令只需在此增加 { "name", CallbackFn } 项 */
+static const CmdEntry_t cmdTable[] = {
+  { "help",   Cmd_Help   },
+  { "h",      Cmd_Help   },
+  { "speed",  Cmd_SetSpeed },
+  { "start",  Cmd_Start  },
+  { "pause",  Cmd_Pause  },
+  { "status", Cmd_Status },
+  { NULL,     NULL       }
+};
+
 /* Private function prototypes -----------------------------------------------*/
 static void UART_Config(void);
 static void TIM1_PWM_Config(void);
@@ -222,6 +258,7 @@ static void Task_PWM(void);
 static void Task_Print(void);
 static void Task_TM1729(void);
 static void Task_Idle(void);
+static void Task_UartCmd(void);
 
 /* 业务辅助函数 */
 static uint16_t ComposeSeconds(uint8_t minute, uint8_t second);
@@ -257,6 +294,7 @@ typedef struct {
 
 static Task_t tasks[] = {
   { TASK_PERIOD_ENCODER_MS, 0, Task_Encoder },
+  { TASK_PERIOD_UART_CMD_MS, 0, Task_UartCmd },
   { TASK_PERIOD_APP_MS,     0, Task_App     },
   { TASK_PERIOD_PWM_MS,     0, Task_PWM     },
   { TASK_PERIOD_PRINT_MS,   0, Task_Print   },
@@ -317,6 +355,7 @@ int main(void)
   }
 
   printf("Starting scheduler...\n\r");
+  printf("homogenizer > ");
 
   /* 主循环：轮询任务表，倒计时为0则执行任务并重置倒计时 */
   while(1)
@@ -612,6 +651,153 @@ static void Task_Idle(void)
   {
     ApplyPauseAction();
   }
+}
+
+/* UART 命令输入任务：2ms 轮询，接收完整行后解析执行 */
+static void UART_ProcessCommandLine(const char* line)
+{
+  const char* p = line;
+  while (*p == ' ') p++;
+  if (*p == '\0') return;
+
+  const char* args = p;
+  while (*args != '\0' && *args != ' ') args++;
+  uint8_t cmdLen = (uint8_t)(args - p);
+  while (*args == ' ') args++;
+
+  for (const CmdEntry_t* entry = cmdTable; entry->cmd != NULL; entry++)
+  {
+    if (strncmp(p, entry->cmd, cmdLen) == 0 && entry->cmd[cmdLen] == '\0')
+    {
+      entry->cb(args);
+      return;
+    }
+  }
+
+  printf("\r\nUnknown: %s\r\n", line);
+}
+
+static void UART_PollRx(void)
+{
+  /* 将 UART 硬件接收到的字节全部读入环形缓冲 */
+  while (UART_GetFlagStatus(EVAL_COM1, UART_FLAG_RXNE) == SET)
+  {
+    uint8_t ch = (uint8_t)UART_ReceiveData(EVAL_COM1);
+    uint8_t next = (uint8_t)((uartRxHead + 1U) % UART_RX_RING_SIZE);
+    if (next != uartRxTail)
+    {
+      uartRxRing[uartRxHead] = ch;
+      uartRxHead = next;
+    }
+  }
+
+  /* 从环形缓冲提取字符进行行编辑和解析 */
+  while (uartRxTail != uartRxHead)
+  {
+    uint8_t ch = uartRxRing[uartRxTail];
+    uartRxTail = (uint8_t)((uartRxTail + 1U) % UART_RX_RING_SIZE);
+
+    if (ch == '\n' || ch == '\r')
+    {
+      /* 跳过紧随其后的连续换行符（兼容 \r\n / \n\r / 单个 \r / 单个 \n） */
+      while (uartRxTail != uartRxHead)
+      {
+        uint8_t nxt = uartRxRing[uartRxTail];
+        if (nxt == '\n' || nxt == '\r')
+          uartRxTail = (uint8_t)((uartRxTail + 1U) % UART_RX_RING_SIZE);
+        else
+          break;
+      }
+
+      /* 处理收到的行（可能为空行） */
+      cmdLineBuf[cmdLineLen] = '\0';
+      UART_ProcessCommandLine((const char*)cmdLineBuf);
+      cmdLineLen = 0U;
+
+      /* 无论是否空行，都打印下一个提示符 */
+      printf("\r\nhomogenizer > ");
+    }
+    else if (ch == '\b' || ch == 0x7F)
+    {
+      /* 退格：擦除终端上前一个字符 */
+      if (cmdLineLen > 0U)
+      {
+        cmdLineLen--;
+        printf("\b \b");
+      }
+    }
+    else if (cmdLineLen < CMD_LINE_MAX - 1U)
+    {
+      /* 普通字符：存入缓冲区并回显（远程 echo，不依赖终端本地 echo 设置） */
+      cmdLineBuf[cmdLineLen++] = ch;
+      printf("%c", (char)ch);
+    }
+  }
+}
+
+static void Task_UartCmd(void)
+{
+  UART_PollRx();
+}
+
+/* ======================== 命令回调函数实现 ======================== */
+
+static void Cmd_Help(const char* args)
+{
+  (void)args;
+  printf("\r\nAvailable commands:\r\n");
+  for (const CmdEntry_t* entry = cmdTable; entry->cmd != NULL; entry++)
+  {
+    printf("  %s\r\n", entry->cmd);
+  }
+}
+
+static void Cmd_SetSpeed(const char* args)
+{
+  int val = 0;
+  while (*args == ' ') args++;
+  while (*args >= '0' && *args <= '9')
+  {
+    val = val * 10 + (*args - '0');
+    args++;
+  }
+  if (val < 0) val = 0;
+  if (val > 100) val = 100;
+
+  if (AppMode == APP_MODE_SETTING)
+  {
+    EditSpeedPercent = (uint8_t)val;
+    ResetSettingUiTimers();
+    DutyChanged = 1U;
+  }
+  ConfigSpeedPercent = (uint8_t)val;
+  printf("\r\nSpeed set to %u%%\r\n", (unsigned)ConfigSpeedPercent);
+}
+
+static void Cmd_Start(const char* args)
+{
+  (void)args;
+  ApplyStartAction();
+  printf("\r\nStart\r\n");
+}
+
+static void Cmd_Pause(const char* args)
+{
+  (void)args;
+  ApplyPauseAction();
+  printf("\r\nPause\r\n");
+}
+
+static void Cmd_Status(const char* args)
+{
+  (void)args;
+  uint8_t m = ConfigMin;
+  uint8_t s = ConfigSec;
+  printf("\r\nMode:%-10s | Speed:%3u%% | Time:%02u:%02u | Countdown:%4u s\r\n",
+         GetModeName(AppMode),
+         (unsigned)((AppMode == APP_MODE_RUNNING) ? MotorSpeedPercent : ConfigSpeedPercent),
+         (unsigned)m, (unsigned)s,
+         (unsigned)CountdownSec);
 }
 
 /* TM1729 显示任务：50ms 刷新一次显示缓冲 */
