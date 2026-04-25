@@ -731,8 +731,8 @@ static void Cmd_Pause(const char* args)
 static void Cmd_Status(const char* args)
 {
   (void)args;
-  uint8_t m = ConfigMin;
-  uint8_t s = ConfigSec;
+  uint8_t m = (uint8_t)(CountdownSec / 60U);
+  uint8_t s = (uint8_t)(CountdownSec % 60U);
   printf("\r\nMode:%-10s | Speed:%3u%% | Time:%02u:%02u | Countdown:%4u s\r\n",
          GetModeName(AppMode),
          (unsigned)((AppMode == APP_MODE_RUNNING) ? MotorSpeedPercent : ConfigSpeedPercent),
@@ -815,8 +815,8 @@ static void EnterSettingMode(void)
     AppMode = APP_MODE_SETTING;
     SettingField = SET_FIELD_SPEED;
     EditSpeedPercent = ConfigSpeedPercent;
-    EditMin = ConfigMin;
-    EditSec = ConfigSec;
+    EditMin = (uint8_t)(CountdownSec / 60U);
+    EditSec = (uint8_t)(CountdownSec % 60U);
     CountdownSecBackup = CountdownSec; // 进入设置时冻结倒计时
     ResetSettingUiTimers();
   }
