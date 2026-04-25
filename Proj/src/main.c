@@ -22,7 +22,6 @@
 #define TASK_PERIOD_ENCODER_MS 2U
 #define TASK_PERIOD_APP_MS     10U
 #define TASK_PERIOD_PWM_MS     5U
-#define TASK_PERIOD_PRINT_MS   100U
 #define TASK_PERIOD_TM1729_MS  50U
 #define TASK_PERIOD_DEFAULT_MS 1000U
 #define TASK_PERIOD_UART_CMD_MS 2U
@@ -255,7 +254,6 @@ static void EC11_Config(void);
 static void Task_Encoder(void);
 static void Task_App(void);
 static void Task_PWM(void);
-static void Task_Print(void);
 static void Task_TM1729(void);
 static void Task_Idle(void);
 static void Task_UartCmd(void);
@@ -297,7 +295,6 @@ static Task_t tasks[] = {
   { TASK_PERIOD_UART_CMD_MS, 0, Task_UartCmd },
   { TASK_PERIOD_APP_MS,     0, Task_App     },
   { TASK_PERIOD_PWM_MS,     0, Task_PWM     },
-  { TASK_PERIOD_PRINT_MS,   0, Task_Print   },
   { TASK_PERIOD_TM1729_MS,  0, Task_TM1729  },
   { TASK_PERIOD_DEFAULT_MS, 0, Task_Idle    }
 };
@@ -571,63 +568,6 @@ static void Task_PWM(void)
     TIM1_SetDutyPermille(CurrentDutyPermille);
     DutyChanged = 0U;
   }
-}
-
-/* 打印任务：每100ms汇总并打印PWM与旋钮信息 */
-static void Task_Print(void)
-{
-  uint16_t showSec = CountdownSec;
-  uint8_t showMin = (uint8_t)(showSec / 60U);
-  uint8_t showS = (uint8_t)(showSec % 60U);
-  uint8_t speedShow = (AppMode == APP_MODE_RUNNING) ? MotorSpeedPercent : 0U;
-  const char* modeName = GetModeName(AppMode);
-
-  if (AppMode == APP_MODE_SETTING)
-  {
-    showMin = EditMin;
-    showS = EditSec;
-    speedShow = EditSpeedPercent;
-  }
-
-  /* 单行输出，使用回车覆盖上一行，尾部填充空格避免残留字符 */
-  if ((AppMode == APP_MODE_SETTING) && (SettingField == SET_FIELD_SPEED) && (BlinkVisible == 0U))
-  {
-    printf("\rMODE:%-10s | SPEED: --%% | TIME:%02u:%02u | KEY:%-8s | POS:%6ld    ",
-           modeName,
-           (unsigned)showMin,
-           (unsigned)showS,
-           (KeyPressedState == 0U) ? "PRESSED" : "RELEASED",
-           (long)EncoderPosition);
-  }
-  else if ((AppMode == APP_MODE_SETTING) && (SettingField == SET_FIELD_MIN) && (BlinkVisible == 0U))
-  {
-    printf("\rMODE:%-10s | SPEED:%3u%% | TIME:--:%02u | KEY:%-8s | POS:%6ld    ",
-           modeName,
-           (unsigned)speedShow,
-           (unsigned)showS,
-           (KeyPressedState == 0U) ? "PRESSED" : "RELEASED",
-           (long)EncoderPosition);
-  }
-  else if ((AppMode == APP_MODE_SETTING) && (SettingField == SET_FIELD_SEC) && (BlinkVisible == 0U))
-  {
-    printf("\rMODE:%-10s | SPEED:%3u%% | TIME:%02u:-- | KEY:%-8s | POS:%6ld    ",
-           modeName,
-           (unsigned)speedShow,
-           (unsigned)showMin,
-           (KeyPressedState == 0U) ? "PRESSED" : "RELEASED",
-           (long)EncoderPosition);
-  }
-  else
-  {
-    printf("\rMODE:%-10s | SPEED:%3u%% | TIME:%02u:%02u | KEY:%-8s | POS:%6ld    ",
-           modeName,
-           (unsigned)speedShow,
-           (unsigned)showMin,
-           (unsigned)showS,
-           (KeyPressedState == 0U) ? "PRESSED" : "RELEASED",
-           (long)EncoderPosition);
-  }
-
 }
 
 /* 空任务：占位，可用于低优先级维护工作 */
