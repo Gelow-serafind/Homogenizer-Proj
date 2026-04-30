@@ -12,6 +12,7 @@
 #include "main.h"
 #include <stdio.h>
 #include <string.h>
+#include "hk32f0301mxxc_flash.h"
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -108,6 +109,12 @@
 #define LCD_5thNUM_g   (TM1729_SEG_PIN10 + TM1729_COM4)
 
 #define LCD_RPM_S1     (TM1729_SEG_PIN6 + TM1729_COM4)
+
+#define FLASH_SAVE_ADDR      ((uint32_t)0x08003FFC)
+#define FLASH_SAVE_PAGE_ADDR ((uint32_t)0x08003F80)
+
+static void SaveTimeToFlash(uint16_t min, uint16_t sec);
+static void LoadTimeFromFlash(uint16_t* min, uint16_t* sec);
 
 /* Private variables ---------------------------------------------------------*/
 static uint16_t PWMPeriod;
@@ -301,6 +308,23 @@ static Task_t tasks[] = {
 
 #define TASKS_COUNT (sizeof(tasks)/sizeof(tasks[0]))
 
+static void SaveTimeToFlash(uint16_t min, uint16_t sec)
+{
+    uint32_t data = ((uint32_t)sec << 16) | min;
+
+    FLASH_Unlock();
+    FLASH_ErasePage(FLASH_SAVE_PAGE_ADDR);
+    FLASH_ProgramWord(FLASH_SAVE_ADDR, data);
+    FLASH_Lock();
+}
+
+static void LoadTimeFromFlash(uint16_t* min, uint16_t* sec)
+{
+    uint32_t data = *(volatile uint32_t*)FLASH_SAVE_ADDR;
+    *min = (uint16_t)(data & 0xFFFF);
+    *sec = (uint16_t)((data >> 16) & 0xFFFF);
+}
+
 /* Private functions ---------------------------------------------------------*/
 
 /**
@@ -331,6 +355,13 @@ int main(void)
   { 
     /* Capture error */ 
     while (1);
+  }
+
+  uint16_t savedMin, savedSec;
+  LoadTimeFromFlash(&savedMin, &savedSec);
+  if (savedMin <= 99 && savedSec <= 59) {
+    ConfigMin = savedMin;
+    ConfigSec = savedSec;
   }
 
   CountdownSec = ComposeSeconds(ConfigMin, ConfigSec);
@@ -834,6 +865,7 @@ static void ExitSettingMode(uint8_t applyChanges)
     ConfigSpeedPercent = EditSpeedPercent;
     ConfigMin = EditMin;
     ConfigSec = EditSec;
+    SaveTimeToFlash(ConfigMin, ConfigSec); // 新增：保存到Flash
   }
 
   if (AppModeBeforeSetting == APP_MODE_RUNNING)
