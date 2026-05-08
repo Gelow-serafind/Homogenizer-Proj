@@ -26,9 +26,11 @@
 #define TASK_PERIOD_UART_CMD_MS 2U
 
 /* 业务参数 */
-#define SPEED_STEP_PERCENT     1U
-#define SPEED_PERCENT_TO_PWM_PERMILLE(percent) ((uint16_t)(100U - (uint16_t)(percent)) * 10U)
-#define PWM_INACTIVE_PERMILLE  SPEED_PERCENT_TO_PWM_PERMILLE(0U)
+#define RPM_STEP_MIN      5000U    /* 最小运行转速 */
+#define RPM_STEP_NORMAL   1000U    /* 旋钮分度值 */
+#define RPM_RAMP_STEP     50U      /* 每10ms平滑步进（5000 RPM/s） */
+#define RPM_MAX           25000U   /* 最大显示转速 */
+#define PWM_INACTIVE_PERMILLE 1000U
 #define LONG_PRESS_MS          3000U
 #define KEY_DEBOUNCE_TICKS     3U
 
@@ -108,6 +110,34 @@
 
 #define LCD_RPM_S1     (TM1729_SEG_PIN6 + TM1729_COM4)
 
+/* RPM → 占空比(%) 查表（线性插值），数据来自实测转速表 */
+static const uint16_t RpmDutyLUT[][2] = {
+  { 0,     0   },
+  { 5000,  16  },
+  { 5951,  20  },
+  { 6327,  22  },
+  { 6727,  24  },
+  { 7094,  26  },
+  { 7489,  28  },
+  { 7944,  30  },
+  { 8269,  31  },
+  { 8733,  32  },
+  { 9308,  33  },
+  { 9715,  34  },
+  { 10058, 35  },
+  { 11037, 37  },
+  { 12044, 39  },
+  { 13016, 41  },
+  { 13868, 43  },
+  { 14898, 45  },
+  { 15500, 47  },
+  { 16700, 50  },
+  { 18000, 53  },
+  { 19000, 55  },
+  { 25000, 63  },
+};
+#define RPM_DUTY_LUT_ENTRIES (sizeof(RpmDutyLUT) / sizeof(RpmDutyLUT[0]))
+
 /* Private variables ---------------------------------------------------------*/
 static uint16_t PWMPeriod;
 
@@ -126,8 +156,8 @@ typedef enum {
 
 static volatile AppMode_t AppMode = APP_MODE_STOPPED;
 
-static uint8_t ConfigSpeedPercent = 0U;  /* 目标转速，停止/暂停时旋钮调整此值 */
-static uint8_t MotorSpeedPercent = 0U;   /* 电机实际输出转速 */
+static uint16_t ConfigRpm = 0;    /* 目标转速，旋钮调整此值 */
+static uint16_t MotorRpm = 0;     /* 实际输出转速（运行时平滑 ramp） */
 
 static volatile uint16_t CurrentDutyPermille = 0U;
 static volatile uint8_t DutyChanged = 1U;
@@ -232,6 +262,7 @@ static void Task_TM1729(void);
 static void Task_UartCmd(void);
 
 /* 业务辅助函数 */
+static uint8_t RpmToDutyPercent(uint16_t rpm);
 static uint16_t GetTargetDutyPermille(void);
 static const char* GetModeName(AppMode_t mode);
 
@@ -306,6 +337,7 @@ int main(void)
   printf("EC11 A/B/KEY: PC3/PC4/PC5 (active low)\n\r");
   printf("TM1729 SCL/SDA: PC6/PC7\n\r");
   printf("Long Press (3s): start / pause\n\r");
+  printf("Knob: adjust RPM (step 1000, min 5000)\n\r");
   printf("========================================\n\r\n\r");
 
   /* Loop until the end of transmission */
@@ -439,7 +471,6 @@ static void Task_App(void)
   __disable_irq();
   delta = EncDeltaPending;
   EncDeltaPending = 0;
-  /* 短按事件忽略，此版本无设置模式 */
   KeyShortPressEvent = 0U;
   longEvt = KeyLongPressEvent;
   KeyLongPressEvent = 0U;
@@ -451,44 +482,67 @@ static void Task_App(void)
     if (AppMode == APP_MODE_RUNNING)
     {
       AppMode = APP_MODE_STOPPED;
-      MotorSpeedPercent = 0U;
+      MotorRpm = 0U;
       DutyChanged = 1U;
     }
     else
     {
       AppMode = APP_MODE_RUNNING;
-      MotorSpeedPercent = ConfigSpeedPercent;
+      /* MotorRpm 从 0 开始 ramp 到 ConfigRpm */
       DutyChanged = 1U;
     }
   }
 
-  /* 转动旋钮：始终调整目标转速 */
+  /* 转动旋钮：调整目标转速，分度值 1000，0↔5000 跳变 */
   while (delta > 0)
   {
-    if (ConfigSpeedPercent < 100U)
+    if (ConfigRpm == 0)
     {
-      ConfigSpeedPercent++;
-      if (AppMode == APP_MODE_RUNNING)
-      {
-        MotorSpeedPercent = ConfigSpeedPercent;
-        DutyChanged = 1U;
-      }
+      ConfigRpm = RPM_STEP_MIN;              /* 0 → 5000 */
+    }
+    else if (ConfigRpm < RPM_STEP_MIN)
+    {
+      ConfigRpm = RPM_STEP_MIN;
+    }
+    else
+    {
+      ConfigRpm += RPM_STEP_NORMAL;
+      if (ConfigRpm > RPM_MAX) ConfigRpm = RPM_MAX;
     }
     delta--;
   }
 
   while (delta < 0)
   {
-    if (ConfigSpeedPercent > 0U)
+    if (ConfigRpm <= RPM_STEP_MIN)
     {
-      ConfigSpeedPercent--;
-      if (AppMode == APP_MODE_RUNNING)
-      {
-        MotorSpeedPercent = ConfigSpeedPercent;
-        DutyChanged = 1U;
-      }
+      ConfigRpm = 0;                          /* ≤5000 → 0 */
+    }
+    else
+    {
+      ConfigRpm -= RPM_STEP_NORMAL;
+      if (ConfigRpm < RPM_STEP_MIN) ConfigRpm = 0;
     }
     delta++;
+  }
+
+  /* 运行时平滑 ramp：MotorRpm 均匀趋近 ConfigRpm */
+  if (AppMode == APP_MODE_RUNNING && MotorRpm != ConfigRpm)
+  {
+    if (MotorRpm < ConfigRpm)
+    {
+      MotorRpm += RPM_RAMP_STEP;
+      if (MotorRpm > ConfigRpm) MotorRpm = ConfigRpm;
+    }
+    else
+    {
+      if (MotorRpm > RPM_RAMP_STEP)
+        MotorRpm -= RPM_RAMP_STEP;
+      else
+        MotorRpm = 0;
+      if (MotorRpm < ConfigRpm) MotorRpm = ConfigRpm;
+    }
+    DutyChanged = 1U;
   }
 }
 
@@ -613,71 +667,92 @@ static void Cmd_SetSpeed(const char* args)
     args++;
   }
   if (val < 0) val = 0;
-  if (val > 100) val = 100;
+  if (val > RPM_MAX) val = RPM_MAX;
 
-  ConfigSpeedPercent = (uint8_t)val;
-  if (AppMode == APP_MODE_RUNNING)
-  {
-    MotorSpeedPercent = ConfigSpeedPercent;
-    DutyChanged = 1U;
-  }
-
-  printf("\r\nSpeed set to %u%%\r\n", (unsigned)ConfigSpeedPercent);
+  ConfigRpm = (uint16_t)val;
+  printf("\r\nSpeed set to %u RPM\r\n", (unsigned)ConfigRpm);
 }
 
 static void Cmd_Start(const char* args)
 {
   (void)args;
-  AppMode = APP_MODE_RUNNING;
-  MotorSpeedPercent = ConfigSpeedPercent;
-  DutyChanged = 1U;
-  printf("\r\nStart\r\n");
+  if (AppMode != APP_MODE_RUNNING)
+  {
+    AppMode = APP_MODE_RUNNING;
+    DutyChanged = 1U;
+    printf("\r\nStart\r\n");
+  }
 }
 
 static void Cmd_Pause(const char* args)
 {
   (void)args;
-  AppMode = APP_MODE_STOPPED;
-  MotorSpeedPercent = 0U;
-  DutyChanged = 1U;
-  printf("\r\nPause\r\n");
+  if (AppMode == APP_MODE_RUNNING)
+  {
+    AppMode = APP_MODE_STOPPED;
+    MotorRpm = 0U;
+    DutyChanged = 1U;
+    printf("\r\nPause\r\n");
+  }
 }
 
 static void Cmd_Status(const char* args)
 {
   (void)args;
-  uint8_t pwmOutputPercent = 0U;
-  uint8_t displayPercent = 0U;
+  uint8_t dutyPct = RpmToDutyPercent(MotorRpm);
 
-  pwmOutputPercent = (uint8_t)(GetTargetDutyPermille() / 10U);
-  displayPercent = (AppMode == APP_MODE_RUNNING) ? MotorSpeedPercent : ConfigSpeedPercent;
-
-  printf("\r\nMode:%-10s | Set:%3u%% | PWM:%3u%% | Motor:%3u%%\r\n",
+  printf("\r\nMode:%-10s | Target:%5u RPM | Motor:%5u RPM | Duty:%3u%%\r\n",
          GetModeName(AppMode),
-         (unsigned)displayPercent,
-         (unsigned)pwmOutputPercent,
-         (unsigned)(100U - pwmOutputPercent));
+         (unsigned)ConfigRpm,
+         (unsigned)MotorRpm,
+         (unsigned)dutyPct);
 }
 
 /* TM1729 显示任务：50ms 刷新一次显示缓冲 */
 static void Task_TM1729(void)
 {
-  uint8_t speedToShow;
+  uint16_t rpmToShow;
   memset(TM1729_BitBuf, 0, sizeof(TM1729_BitBuf));
 
   /* 停止时显示目标转速，运行时显示实际输出转速 */
-  speedToShow = (AppMode == APP_MODE_RUNNING) ? MotorSpeedPercent : ConfigSpeedPercent;
-  TM1729_ShowValueOnRange(speedToShow, 0U, 4U);
+  rpmToShow = (AppMode == APP_MODE_RUNNING) ? MotorRpm : ConfigRpm;
+  TM1729_ShowValueOnRange(rpmToShow, 0U, 4U);
   TM1729_SetRpmIndicator(1U);
 
   TM1729_WriteBuffer();
+}
+
+/* RPM → 占空比(%) 查表线性插值 */
+static uint8_t RpmToDutyPercent(uint16_t rpm)
+{
+  uint8_t i;
+
+  if (rpm <= RpmDutyLUT[0][0])
+    return (uint8_t)RpmDutyLUT[0][1];
+
+  for (i = 1; i < RPM_DUTY_LUT_ENTRIES; i++)
+  {
+    if (rpm <= RpmDutyLUT[i][0])
+    {
+      uint16_t rLo = RpmDutyLUT[i - 1][0];
+      uint16_t rHi = RpmDutyLUT[i][0];
+      uint8_t  dLo = RpmDutyLUT[i - 1][1];
+      uint8_t  dHi = RpmDutyLUT[i][1];
+
+      if (rHi == rLo) return dLo;
+      return (uint8_t)(dLo + ((uint32_t)(dHi - dLo) * (rpm - rLo)) / (rHi - rLo));
+    }
+  }
+
+  return (uint8_t)RpmDutyLUT[RPM_DUTY_LUT_ENTRIES - 1][1];
 }
 
 static uint16_t GetTargetDutyPermille(void)
 {
   if (AppMode == APP_MODE_RUNNING)
   {
-    return SPEED_PERCENT_TO_PWM_PERMILLE(MotorSpeedPercent);
+    uint8_t dutyPct = RpmToDutyPercent(MotorRpm);
+    return (uint16_t)(100U - dutyPct) * 10U;
   }
   return PWM_INACTIVE_PERMILLE;
 }
@@ -1077,7 +1152,7 @@ int fputc(int ch, FILE *f)
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
   * @param  file: pointer to the source file name
-  * @param  line: assert_param error line number source
+  * @param  err_line: assert_param error line number
   * @retval None
   */
 void assert_failed(uint8_t* file, uint32_t line)
@@ -1091,5 +1166,3 @@ void assert_failed(uint8_t* file, uint32_t line)
   }
 }
 #endif
-
-
