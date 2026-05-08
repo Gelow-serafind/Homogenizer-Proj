@@ -12,6 +12,7 @@
 #include "main.h"
 #include <stdio.h>
 #include <string.h>
+#include "hk32f0301mxxc_flash.h"
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -137,6 +138,56 @@ static const uint16_t RpmDutyLUT[][2] = {
   { 25000, 63  },
 };
 #define RPM_DUTY_LUT_ENTRIES (sizeof(RpmDutyLUT) / sizeof(RpmDutyLUT[0]))
+
+/* Flash 存储 - 磨损均衡 -----------------------------------------------------*/
+/* 使用最后 128 字节页，32 个 uint32 slot（仅低 16 位存转速），免去独立计数位置 */
+#define FLASH_SAVE_PAGE_ADDR ((uint32_t)0x08003F80)
+#define FLASH_SAVE_SLOTS     32U
+#define FLASH_SAVE_SLOT_SIZE 4U
+
+static uint16_t FlashLastSavedRpm = 0xFFFF;
+
+/* 从后往前扫描，返回最后一个有效转速值；无则返回 0
+   仅接受高 16 位为 0 的条目（排除旧版本时间数据等残留） */
+static uint16_t LoadLastRpm(void)
+{
+    for (int16_t i = (int16_t)(FLASH_SAVE_SLOTS - 1); i >= 0; i--)
+    {
+        uint32_t word = *(volatile uint32_t*)(FLASH_SAVE_PAGE_ADDR + (uint32_t)i * FLASH_SAVE_SLOT_SIZE);
+        if (word != 0xFFFFFFFFU && (word >> 16) == 0)
+        {
+            return (uint16_t)(word & 0xFFFFU);
+        }
+    }
+    return 0;
+}
+
+/* 找第一个空位（低 16 位为 0xFFFF）写入；无空位则擦除整页后写入 slot 0 */
+static void SaveRpmToFlash(uint16_t rpm)
+{
+    uint8_t i;
+    uint32_t word;
+    uint32_t addr;
+
+    for (i = 0; i < FLASH_SAVE_SLOTS; i++)
+    {
+        addr = FLASH_SAVE_PAGE_ADDR + (uint32_t)i * FLASH_SAVE_SLOT_SIZE;
+        word = *(volatile uint32_t*)addr;
+        if ((word & 0xFFFFU) == 0xFFFFU)
+        {
+            FLASH_Unlock();
+            FLASH_ProgramWord(addr, (uint32_t)rpm);
+            FLASH_Lock();
+            return;
+        }
+    }
+
+    /* 所有 slot 已用完，擦除整页从头开始 */
+    FLASH_Unlock();
+    FLASH_ErasePage(FLASH_SAVE_PAGE_ADDR);
+    FLASH_ProgramWord(FLASH_SAVE_PAGE_ADDR, (uint32_t)rpm);
+    FLASH_Lock();
+}
 
 /* Private variables ---------------------------------------------------------*/
 static uint16_t PWMPeriod;
@@ -265,6 +316,8 @@ static void Task_UartCmd(void);
 static uint8_t RpmToDutyPercent(uint16_t rpm);
 static uint16_t GetTargetDutyPermille(void);
 static const char* GetModeName(AppMode_t mode);
+static uint16_t LoadLastRpm(void);
+static void SaveRpmToFlash(uint16_t rpm);
 
 static void TM1729_ShortDelay(void);
 static void TM1729_Start(void);
@@ -328,6 +381,10 @@ int main(void)
     /* Capture error */
     while (1);
   }
+
+  /* 从 Flash 恢复上次设置的转速 */
+  ConfigRpm = LoadLastRpm();
+  FlashLastSavedRpm = ConfigRpm;
 
   printf("\n\r========================================\n\r");
   printf("HK32F0301MxxxxC Homogenizer Demo\n\r");
@@ -524,6 +581,13 @@ static void Task_App(void)
       if (ConfigRpm < RPM_STEP_MIN) ConfigRpm = 0;
     }
     delta++;
+  }
+
+  /* ConfigRpm 变更时保存到 Flash（磨损均衡，仅值不同时写入） */
+  if (ConfigRpm != FlashLastSavedRpm)
+  {
+    SaveRpmToFlash(ConfigRpm);
+    FlashLastSavedRpm = ConfigRpm;
   }
 
   /* 运行时平滑 ramp：MotorRpm 均匀趋近 ConfigRpm */
