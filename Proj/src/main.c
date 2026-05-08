@@ -1,7 +1,7 @@
 /*******************************************************************************
 * @copyright: Hangzhou Cloudvoyage Cross-border E-commerce Co., Ltd.
 * @filename:  main.c
-* @brief:     
+* @brief:
 * @author:    tiedan
 * @email:    tiedan1026@gmail.com
 * @version:   V1.0/2026.04.19
@@ -12,7 +12,6 @@
 #include "main.h"
 #include <stdio.h>
 #include <string.h>
-#include "hk32f0301mxxc_flash.h"
 
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -24,7 +23,6 @@
 #define TASK_PERIOD_APP_MS     10U
 #define TASK_PERIOD_PWM_MS     5U
 #define TASK_PERIOD_TM1729_MS  50U
-#define TASK_PERIOD_DEFAULT_MS 1000U
 #define TASK_PERIOD_UART_CMD_MS 2U
 
 /* 业务参数 */
@@ -33,8 +31,6 @@
 #define PWM_INACTIVE_PERMILLE  SPEED_PERCENT_TO_PWM_PERMILLE(0U)
 #define LONG_PRESS_MS          3000U
 #define KEY_DEBOUNCE_TICKS     3U
-#define BLINK_INTERVAL_MS      500U
-#define SETTING_TIMEOUT_MS     5000U
 
 #define EC11_GPIO_PORT GPIOC
 #define EC11_PIN_A GPIO_Pin_3
@@ -112,12 +108,6 @@
 
 #define LCD_RPM_S1     (TM1729_SEG_PIN6 + TM1729_COM4)
 
-#define FLASH_SAVE_ADDR      ((uint32_t)0x08003FFC)
-#define FLASH_SAVE_PAGE_ADDR ((uint32_t)0x08003F80)
-
-static void SaveTimeToFlash(uint16_t min, uint16_t sec);
-static void LoadTimeFromFlash(uint16_t* min, uint16_t* sec);
-
 /* Private variables ---------------------------------------------------------*/
 static uint16_t PWMPeriod;
 
@@ -130,33 +120,14 @@ static volatile uint8_t KeyPressedState = 1U; /* active-low: 0=pressed */
 
 /* 业务数据 */
 typedef enum {
-  APP_MODE_IDLE = 0,
-  APP_MODE_SETTING,
-  APP_MODE_RUNNING,
-  APP_MODE_PAUSED
+  APP_MODE_STOPPED = 0,
+  APP_MODE_RUNNING
 } AppMode_t;
 
-typedef enum {
-  SET_FIELD_NONE = 0,
-  SET_FIELD_SPEED,
-  SET_FIELD_MIN,
-  SET_FIELD_SEC
-} SetField_t;
+static volatile AppMode_t AppMode = APP_MODE_STOPPED;
 
-static volatile AppMode_t AppMode = APP_MODE_IDLE;
-static AppMode_t AppModeBeforeSetting = APP_MODE_IDLE;
-static volatile SetField_t SettingField = SET_FIELD_NONE;
-
-static uint8_t ConfigSpeedPercent = 0U;  /* 上电默认显示速度参数为0 */
-static uint8_t ConfigMin = 1U;           /* 模拟“上次设置值” */
-static uint8_t ConfigSec = 0U;
-
-static uint8_t EditSpeedPercent = 0U;
-static uint8_t EditMin = 1U;
-static uint8_t EditSec = 0U;
-
-static uint16_t CountdownSec = 60U;
-static uint8_t MotorSpeedPercent = 0U;
+static uint8_t ConfigSpeedPercent = 0U;  /* 目标转速，停止/暂停时旋钮调整此值 */
+static uint8_t MotorSpeedPercent = 0U;   /* 电机实际输出转速 */
 
 static volatile uint16_t CurrentDutyPermille = 0U;
 static volatile uint8_t DutyChanged = 1U;
@@ -209,12 +180,6 @@ const unsigned char LCD_NumPos[] =
   LCD_5thNUM_g,
 };
 
-/* 设置界面闪烁控制 */
-static uint16_t BlinkElapsedMs = 0U;
-static uint8_t BlinkVisible = 1U;
-static uint16_t SettingIdleElapsedMs = 0U;
-static uint8_t CountdownExpiredWhileSetting = 0U;
-
 /* UART 命令输入系统 ---------------------------------------------------------*/
 #define UART_RX_RING_SIZE  64U
 #define CMD_LINE_MAX       64U
@@ -264,19 +229,10 @@ static void Task_Encoder(void);
 static void Task_App(void);
 static void Task_PWM(void);
 static void Task_TM1729(void);
-static void Task_Idle(void);
 static void Task_UartCmd(void);
 
 /* 业务辅助函数 */
 static uint16_t GetTargetDutyPermille(void);
-static uint16_t ComposeSeconds(uint8_t minute, uint8_t second);
-static void EnterSettingMode(void);
-static void ExitSettingMode(uint8_t applyChanges);
-static void ResetSettingUiTimers(void);
-static void AdvanceSettingField(void);
-static void AdjustCurrentSettingByStep(int8_t step);
-static void ApplyStartAction(void);
-static void ApplyPauseAction(void);
 static const char* GetModeName(AppMode_t mode);
 
 static void TM1729_ShortDelay(void);
@@ -306,27 +262,9 @@ static Task_t tasks[] = {
   { TASK_PERIOD_APP_MS,     0, Task_App     },
   { TASK_PERIOD_PWM_MS,     0, Task_PWM     },
   { TASK_PERIOD_TM1729_MS,  0, Task_TM1729  },
-  { TASK_PERIOD_DEFAULT_MS, 0, Task_Idle    }
 };
 
 #define TASKS_COUNT (sizeof(tasks)/sizeof(tasks[0]))
-
-static void SaveTimeToFlash(uint16_t min, uint16_t sec)
-{
-    uint32_t data = ((uint32_t)sec << 16) | min;
-
-    FLASH_Unlock();
-    FLASH_ErasePage(FLASH_SAVE_PAGE_ADDR);
-    FLASH_ProgramWord(FLASH_SAVE_ADDR, data);
-    FLASH_Lock();
-}
-
-static void LoadTimeFromFlash(uint16_t* min, uint16_t* sec)
-{
-    uint32_t data = *(volatile uint32_t*)FLASH_SAVE_ADDR;
-    *min = (uint16_t)(data & 0xFFFF);
-    *sec = (uint16_t)((data >> 16) & 0xFFFF);
-}
 
 /* Private functions ---------------------------------------------------------*/
 
@@ -355,19 +293,10 @@ int main(void)
 
   /* Configure SysTick Timer for 1ms interrupts */
   if (SysTick_Config(SystemCoreClock / 1000))
-  { 
-    /* Capture error */ 
+  {
+    /* Capture error */
     while (1);
   }
-
-  uint16_t savedMin, savedSec;
-  LoadTimeFromFlash(&savedMin, &savedSec);
-  if (savedMin <= 99 && savedSec <= 59) {
-    ConfigMin = savedMin;
-    ConfigSec = savedSec;
-  }
-
-  CountdownSec = ComposeSeconds(ConfigMin, ConfigSec);
 
   printf("\n\r========================================\n\r");
   printf("HK32F0301MxxxxC Homogenizer Demo\n\r");
@@ -376,8 +305,7 @@ int main(void)
   printf("TIM1 PWM: 17.57kHz, PD2 pin (CH2)\n\r");
   printf("EC11 A/B/KEY: PC3/PC4/PC5 (active low)\n\r");
   printf("TM1729 SCL/SDA: PC6/PC7\n\r");
-  printf("Short Press: enter/advance setting\n\r");
-  printf("Long Press (3s): start/pause\n\r");
+  printf("Long Press (3s): start / pause\n\r");
   printf("========================================\n\r\n\r");
 
   /* Loop until the end of transmission */
@@ -506,69 +434,61 @@ static void Task_Encoder(void)
 static void Task_App(void)
 {
   int8_t delta = 0;
-  uint8_t shortEvt = 0U;
   uint8_t longEvt = 0U;
 
   __disable_irq();
   delta = EncDeltaPending;
   EncDeltaPending = 0;
-  shortEvt = KeyShortPressEvent;
+  /* 短按事件忽略，此版本无设置模式 */
   KeyShortPressEvent = 0U;
   longEvt = KeyLongPressEvent;
   KeyLongPressEvent = 0U;
   __enable_irq();
 
+  /* 长按：运行/停止切换 */
   if (longEvt != 0U)
   {
     if (AppMode == APP_MODE_RUNNING)
     {
-      ApplyPauseAction();
+      AppMode = APP_MODE_STOPPED;
+      MotorSpeedPercent = 0U;
+      DutyChanged = 1U;
     }
     else
     {
-      ApplyStartAction();
+      AppMode = APP_MODE_RUNNING;
+      MotorSpeedPercent = ConfigSpeedPercent;
+      DutyChanged = 1U;
     }
   }
 
-  if (shortEvt != 0U)
-  {
-    if (AppMode == APP_MODE_SETTING)
-    {
-      AdvanceSettingField();
-    }
-    else
-    {
-      EnterSettingMode();
-    }
-  }
-
+  /* 转动旋钮：始终调整目标转速 */
   while (delta > 0)
   {
-    AdjustCurrentSettingByStep(1);
+    if (ConfigSpeedPercent < 100U)
+    {
+      ConfigSpeedPercent++;
+      if (AppMode == APP_MODE_RUNNING)
+      {
+        MotorSpeedPercent = ConfigSpeedPercent;
+        DutyChanged = 1U;
+      }
+    }
     delta--;
   }
 
   while (delta < 0)
   {
-    AdjustCurrentSettingByStep(-1);
+    if (ConfigSpeedPercent > 0U)
+    {
+      ConfigSpeedPercent--;
+      if (AppMode == APP_MODE_RUNNING)
+      {
+        MotorSpeedPercent = ConfigSpeedPercent;
+        DutyChanged = 1U;
+      }
+    }
     delta++;
-  }
-
-  if (AppMode == APP_MODE_SETTING)
-  {
-    BlinkElapsedMs += TASK_PERIOD_APP_MS;
-    SettingIdleElapsedMs += TASK_PERIOD_APP_MS;
-
-    if (BlinkElapsedMs >= BLINK_INTERVAL_MS)
-    {
-      BlinkElapsedMs = 0U;
-      BlinkVisible = (uint8_t)(1U - BlinkVisible);
-    }
-
-    if (SettingIdleElapsedMs >= SETTING_TIMEOUT_MS)
-    {
-      ExitSettingMode(1U);
-    }
   }
 }
 
@@ -580,29 +500,6 @@ static void Task_PWM(void)
     CurrentDutyPermille = GetTargetDutyPermille();
     TIM1_SetDutyPermille(CurrentDutyPermille);
     DutyChanged = 0U;
-  }
-}
-
-/* 空任务：占位，可用于低优先级维护工作 */
-static void Task_Idle(void)
-{
-  /* 设置模式下冻结倒计时，避免时间设置过程中继续流逝 */
-  if (AppMode != APP_MODE_RUNNING)
-  {
-    return;
-  }
-
-  if (CountdownSec > 0U)
-  {
-    CountdownSec--;
-    if (CountdownSec == 0U)
-    {
-      ApplyPauseAction();
-    }
-  }
-  else
-  {
-    ApplyPauseAction();
   }
 }
 
@@ -708,9 +605,6 @@ static void Cmd_Help(const char* args)
 static void Cmd_SetSpeed(const char* args)
 {
   int val = 0;
-  uint8_t activeDisplayPercent = 0U;
-  uint8_t pwmOutputPercent = 0U;
-  uint8_t motorPercent = 0U;
 
   while (*args == ' ') args++;
   while (*args >= '0' && *args <= '9')
@@ -721,84 +615,48 @@ static void Cmd_SetSpeed(const char* args)
   if (val < 0) val = 0;
   if (val > 100) val = 100;
 
-  if (AppMode == APP_MODE_SETTING)
-  {
-    EditSpeedPercent = (uint8_t)val;
-    ResetSettingUiTimers();
-    DutyChanged = 1U;
-  }
-  else if (AppMode == APP_MODE_RUNNING)
-  {
-    MotorSpeedPercent = (uint8_t)val;
-    DutyChanged = 1U;
-  }
-
   ConfigSpeedPercent = (uint8_t)val;
-  pwmOutputPercent = (uint8_t)(GetTargetDutyPermille() / 10U);
-  motorPercent = (uint8_t)(100U - pwmOutputPercent);
-
-  if (AppMode == APP_MODE_SETTING)
+  if (AppMode == APP_MODE_RUNNING)
   {
-    activeDisplayPercent = EditSpeedPercent;
-  }
-  else if (AppMode == APP_MODE_RUNNING)
-  {
-    activeDisplayPercent = MotorSpeedPercent;
+    MotorSpeedPercent = ConfigSpeedPercent;
+    DutyChanged = 1U;
   }
 
-  printf("\r\nSpeed preset:%u%% | Active:%u%% | PWM out:%u%% | Motor:%u%%\r\n",
-         (unsigned)ConfigSpeedPercent,
-         (unsigned)activeDisplayPercent,
-         (unsigned)pwmOutputPercent,
-         (unsigned)motorPercent);
+  printf("\r\nSpeed set to %u%%\r\n", (unsigned)ConfigSpeedPercent);
 }
 
 static void Cmd_Start(const char* args)
 {
   (void)args;
-  ApplyStartAction();
+  AppMode = APP_MODE_RUNNING;
+  MotorSpeedPercent = ConfigSpeedPercent;
+  DutyChanged = 1U;
   printf("\r\nStart\r\n");
 }
 
 static void Cmd_Pause(const char* args)
 {
   (void)args;
-  ApplyPauseAction();
+  AppMode = APP_MODE_STOPPED;
+  MotorSpeedPercent = 0U;
+  DutyChanged = 1U;
   printf("\r\nPause\r\n");
 }
 
 static void Cmd_Status(const char* args)
 {
   (void)args;
-  uint8_t setPercent = 0U;
   uint8_t pwmOutputPercent = 0U;
-  uint8_t motorPercent = 0U;
-  uint8_t m = (uint8_t)(CountdownSec / 60U);
-  uint8_t s = (uint8_t)(CountdownSec % 60U);
-
-  if (AppMode == APP_MODE_SETTING)
-  {
-    setPercent = EditSpeedPercent;
-  }
-  else if (AppMode == APP_MODE_RUNNING)
-  {
-    setPercent = MotorSpeedPercent;
-  }
-  else
-  {
-    setPercent = ConfigSpeedPercent;
-  }
+  uint8_t displayPercent = 0U;
 
   pwmOutputPercent = (uint8_t)(GetTargetDutyPermille() / 10U);
-  motorPercent = (uint8_t)(100U - pwmOutputPercent);
+  displayPercent = (AppMode == APP_MODE_RUNNING) ? MotorSpeedPercent : ConfigSpeedPercent;
 
-  printf("\r\nMode:%-10s | Set:%3u%% | PWM:%3u%% | Motor:%3u%% | Time:%02u:%02u | Countdown:%4u s\r\n",
+  printf("\r\nMode:%-10s | Set:%3u%% | PWM:%3u%% | Motor:%3u%%\r\n",
          GetModeName(AppMode),
-         (unsigned)setPercent,
+         (unsigned)displayPercent,
          (unsigned)pwmOutputPercent,
-         (unsigned)motorPercent,
-         (unsigned)m, (unsigned)s,
-         (unsigned)CountdownSec);
+         (unsigned)(100U - pwmOutputPercent));
 }
 
 /* TM1729 显示任务：50ms 刷新一次显示缓冲 */
@@ -807,312 +665,30 @@ static void Task_TM1729(void)
   uint8_t speedToShow;
   memset(TM1729_BitBuf, 0, sizeof(TM1729_BitBuf));
 
-  if (AppMode == APP_MODE_SETTING)
-  {
-    if (SettingField == SET_FIELD_SPEED)
-    {
-      /* 设置速度时：数字闪烁，rpm 始终点亮 */
-      if (BlinkVisible != 0U)
-      {
-        TM1729_ShowValueOnRange(EditSpeedPercent, 0U, 4U);
-      } else {
-        for (uint8_t i = 0; i < 5; ++i) TM1729_SetNumAt(i, 16U);
-      }
-      TM1729_SetRpmIndicator(1U);
-    }
-    else
-    {
-      /* 设置分钟/秒钟时：1、2 显示分钟，3 显示-，4、5 显示秒钟，选中谁谁闪烁 */
-      uint8_t min = EditMin;
-      uint8_t sec = EditSec;
-      uint8_t min_hi = min / 10U;
-      uint8_t min_lo = min % 10U;
-      uint8_t sec_hi = sec / 10U;
-      uint8_t sec_lo = sec % 10U;
-      /* 先全部常亮 */
-      TM1729_SetNumAt(0, min_hi);
-      TM1729_SetNumAt(1, min_lo);
-      TM1729_SetNumAt(2, 16U); /* “-” 用空码 */
-      TM1729_SetNumAt(3, sec_hi);
-      TM1729_SetNumAt(4, sec_lo);
-      /* 闪烁选中字段 */
-      if (BlinkVisible == 0U)
-      {
-        if (SettingField == SET_FIELD_MIN)
-        {
-          TM1729_SetNumAt(0, 16U);
-          TM1729_SetNumAt(1, 16U);
-        }
-        else if (SettingField == SET_FIELD_SEC)
-        {
-          TM1729_SetNumAt(3, 16U);
-          TM1729_SetNumAt(4, 16U);
-        }
-      }
-      TM1729_SetRpmIndicator(0U);
-    }
-  }
-  else
-  {
-    /* 运行态显示当前转速；停止态显示 0 转速 */
-    speedToShow = (AppMode == APP_MODE_RUNNING) ? MotorSpeedPercent : 0U;
-    TM1729_ShowValueOnRange(speedToShow, 0U, 4U);
-    TM1729_SetRpmIndicator(1U);
-  }
-  TM1729_WriteBuffer();
-}
+  /* 停止时显示目标转速，运行时显示实际输出转速 */
+  speedToShow = (AppMode == APP_MODE_RUNNING) ? MotorSpeedPercent : ConfigSpeedPercent;
+  TM1729_ShowValueOnRange(speedToShow, 0U, 4U);
+  TM1729_SetRpmIndicator(1U);
 
-static uint16_t ComposeSeconds(uint8_t minute, uint8_t second)
-{
-  return (uint16_t)((uint16_t)minute * 60U + (uint16_t)second);
+  TM1729_WriteBuffer();
 }
 
 static uint16_t GetTargetDutyPermille(void)
 {
-  uint16_t dutyPermille = PWM_INACTIVE_PERMILLE;
-
-  /* 非运行态始终输出“停机电平”，抵消外围反相驱动后让电机保持 0 输出。
-     运行态/运行中进入设置态时，再输出与显示值对应的补偿 PWM。 */
   if (AppMode == APP_MODE_RUNNING)
   {
-    dutyPermille = SPEED_PERCENT_TO_PWM_PERMILLE(MotorSpeedPercent);
+    return SPEED_PERCENT_TO_PWM_PERMILLE(MotorSpeedPercent);
   }
-  else if (AppMode == APP_MODE_SETTING && SettingField == SET_FIELD_SPEED && AppModeBeforeSetting == APP_MODE_RUNNING && CountdownExpiredWhileSetting == 0U)
-  {
-    dutyPermille = SPEED_PERCENT_TO_PWM_PERMILLE(EditSpeedPercent);
-  }
-  else if (AppMode == APP_MODE_SETTING && AppModeBeforeSetting == APP_MODE_RUNNING && CountdownExpiredWhileSetting == 0U)
-  {
-    dutyPermille = SPEED_PERCENT_TO_PWM_PERMILLE(MotorSpeedPercent);
-  }
-
-  return dutyPermille;
-}
-
-static uint16_t CountdownSecBackup = 0U; // 新增：设置态冻结倒计时
-static void EnterSettingMode(void)
-{
-  if (AppMode != APP_MODE_SETTING)
-  {
-    AppModeBeforeSetting = AppMode;
-    AppMode = APP_MODE_SETTING;
-    SettingField = SET_FIELD_SPEED;
-    EditSpeedPercent = ConfigSpeedPercent;
-    EditMin = (uint8_t)(CountdownSec / 60U);
-    EditSec = (uint8_t)(CountdownSec % 60U);
-    CountdownSecBackup = CountdownSec; // 进入设置时冻结倒计时
-    ResetSettingUiTimers();
-  }
-}
-
-static void ExitSettingMode(uint8_t applyChanges)
-{
-  if (AppMode != APP_MODE_SETTING)
-  {
-    return;
-  }
-
-  if (applyChanges != 0U)
-  {
-    ConfigSpeedPercent = EditSpeedPercent;
-    ConfigMin = EditMin;
-    ConfigSec = EditSec;
-    SaveTimeToFlash(ConfigMin, ConfigSec); // 新增：保存到Flash
-  }
-
-  if (AppModeBeforeSetting == APP_MODE_RUNNING)
-  {
-    /* 返回运行态：如果有变更则更新目标速度与倒计时 */
-    if (applyChanges != 0U)
-    {
-      MotorSpeedPercent = ConfigSpeedPercent;
-      CountdownSec = ComposeSeconds(ConfigMin, ConfigSec);
-      DutyChanged = 1U;
-    }
-    else
-    {
-      CountdownSec = CountdownSecBackup; // 未提交则恢复冻结前的倒计时
-    }
-    AppMode = APP_MODE_RUNNING;
-  }
-  else if (AppModeBeforeSetting == APP_MODE_PAUSED)
-  {
-    /* 如果进入设置之前是暂停态，则退出后仍为暂停态 */
-    AppMode = APP_MODE_PAUSED;
-    MotorSpeedPercent = 0U;
-    DutyChanged = 1U;
-    if (applyChanges != 0U)
-    {
-      CountdownSec = ComposeSeconds(ConfigMin, ConfigSec);
-    }
-    else
-    {
-      CountdownSec = CountdownSecBackup;
-    }
-  }
-  else
-  {
-    AppMode = APP_MODE_IDLE;
-    MotorSpeedPercent = 0U;
-    if (applyChanges != 0U)
-    {
-      CountdownSec = ComposeSeconds(ConfigMin, ConfigSec);
-      DutyChanged = 1U;
-    }
-    else
-    {
-      CountdownSec = CountdownSecBackup;
-    }
-  }
-
-  SettingField = SET_FIELD_NONE;
-  BlinkVisible = 1U;
-  BlinkElapsedMs = 0U;
-  SettingIdleElapsedMs = 0U;
-  CountdownExpiredWhileSetting = 0U;
-}
-
-static void ResetSettingUiTimers(void)
-{
-  BlinkVisible = 1U;
-  BlinkElapsedMs = 0U;
-  SettingIdleElapsedMs = 0U;
-  CountdownExpiredWhileSetting = 0U;
-}
-
-static void AdvanceSettingField(void)
-{
-  ResetSettingUiTimers();
-
-  if (SettingField == SET_FIELD_SPEED)
-  {
-    SettingField = SET_FIELD_MIN;
-    return;
-  }
-
-  if (SettingField == SET_FIELD_MIN)
-  {
-    SettingField = SET_FIELD_SEC;
-    return;
-  }
-
-  SettingField = SET_FIELD_SPEED;
-}
-
-static void AdjustCurrentSettingByStep(int8_t step)
-{
-  if (AppMode != APP_MODE_SETTING)
-  {
-    return;
-  }
-
-  if (SettingField == SET_FIELD_SPEED)
-  {
-    int16_t value = (int16_t)EditSpeedPercent + ((int16_t)step * (int16_t)SPEED_STEP_PERCENT);
-    if (value < 0)
-    {
-      value = 0;
-    }
-    else if (value > 100)
-    {
-      value = 100;
-    }
-    EditSpeedPercent = (uint8_t)value;
-    DutyChanged = 1U; // 立即触发PWM刷新
-    ResetSettingUiTimers();
-    return;
-  }
-
-  if (SettingField == SET_FIELD_MIN)
-  {
-    int16_t value = (int16_t)EditMin + step;
-    if (value < 0)
-    {
-      value = 0;
-    }
-    else if (value > 99)
-    {
-      value = 99;
-    }
-    EditMin = (uint8_t)value;
-  }
-  else if (SettingField == SET_FIELD_SEC)
-  {
-    int16_t value = (int16_t)EditSec + step;
-    if (value < 0)
-    {
-      value = 0;
-    }
-    else if (value > 59)
-    {
-      value = 59;
-    }
-    EditSec = (uint8_t)value;
-  }
-
-  ResetSettingUiTimers();
-}
-
-static void ApplyStartAction(void)
-{
-  if (AppMode == APP_MODE_SETTING)
-  {
-    ConfigSpeedPercent = EditSpeedPercent;
-    ConfigMin = EditMin;
-    ConfigSec = EditSec;
-    CountdownSec = ComposeSeconds(ConfigMin, ConfigSec);
-    SettingField = SET_FIELD_NONE;
-    BlinkVisible = 1U;
-    BlinkElapsedMs = 0U;
-    SettingIdleElapsedMs = 0U;
-    CountdownExpiredWhileSetting = 0U;
-  }
-
-  if ((AppMode != APP_MODE_SETTING) && (CountdownSec == 0U))
-  {
-    CountdownSec = ComposeSeconds(ConfigMin, ConfigSec);
-  }
-
-  AppMode = APP_MODE_RUNNING;
-  MotorSpeedPercent = ConfigSpeedPercent;
-  DutyChanged = 1U;
-}
-
-static void ApplyPauseAction(void)
-{
-  AppMode = APP_MODE_PAUSED;
-  MotorSpeedPercent = 0U;
-  DutyChanged = 1U;
+  return PWM_INACTIVE_PERMILLE;
 }
 
 static const char* GetModeName(AppMode_t mode)
 {
-  if (mode == APP_MODE_SETTING)
-  {
-    if (SettingField == SET_FIELD_SPEED)
-    {
-      return "SETTING-SPEED";
-    }
-    if (SettingField == SET_FIELD_MIN)
-    {
-      return "SETTING-MIN";
-    }
-    if (SettingField == SET_FIELD_SEC)
-    {
-      return "SETTING-SEC";
-    }
-    return "SETTING";
-  }
-
   if (mode == APP_MODE_RUNNING)
   {
     return "RUNNING";
   }
-  if (mode == APP_MODE_PAUSED)
-  {
-    return "PAUSED";
-  }
-  return "IDLE";
+  return "STOPPED";
 }
 
 /**
@@ -1332,18 +908,10 @@ static void TM1729_Init(void)
 
 static void TM1729_DemoUpdate(AppMode_t mode)
 {
-  /* 状态机演示码：IDLE/SETTING/RUNNING/PAUSED -> 1111/2222/3333/4444 */
-  if (mode == APP_MODE_SETTING)
-  {
-    TM1729_Show4Digits(2U, 2U, 2U, 2U);
-  }
-  else if (mode == APP_MODE_RUNNING)
+  /* 状态机演示码：STOPPED/RUNNING -> 1111/3333 */
+  if (mode == APP_MODE_RUNNING)
   {
     TM1729_Show4Digits(3U, 3U, 3U, 3U);
-  }
-  else if (mode == APP_MODE_PAUSED)
-  {
-    TM1729_Show4Digits(4U, 4U, 4U, 4U);
   }
   else
   {
@@ -1436,7 +1004,7 @@ static void TIM1_PWM_Config(void)
 
   /* Enable TIM1 counter */
   TIM_Cmd(TIM1, ENABLE);
-  
+
   /* Enable TIM1 Main Output */
   TIM_CtrlPWMOutputs(TIM1, ENABLE);
 }
@@ -1509,7 +1077,7 @@ int fputc(int ch, FILE *f)
   * @brief  Reports the name of the source file and the source line number
   *         where the assert_param error has occurred.
   * @param  file: pointer to the source file name
-  * @param  line: assert_param error line source number
+  * @param  line: assert_param error line number source
   * @retval None
   */
 void assert_failed(uint8_t* file, uint32_t line)
