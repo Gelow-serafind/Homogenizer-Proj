@@ -538,15 +538,22 @@ static void Task_Encoder(void)
 static void Task_App(void)
 {
   int8_t delta = 0;
+  int32_t encPos = 0;
   uint8_t longEvt = 0U;
 
   __disable_irq();
   delta = EncDeltaPending;
   EncDeltaPending = 0;
+  encPos = EncoderPosition;
   KeyShortPressEvent = 0U;
   longEvt = KeyLongPressEvent;
   KeyLongPressEvent = 0U;
   __enable_irq();
+
+  if (delta != 0)
+  {
+    printf("\r\nhomogenizer > Knob cnt: %ld\r\nhomogenizer > ", (long)encPos);
+  }
 
   /* 长按：运行/停止切换 */
   if (longEvt != 0U)
