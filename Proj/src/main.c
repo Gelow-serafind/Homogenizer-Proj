@@ -111,31 +111,46 @@
 
 #define LCD_RPM_S1     (TM1729_SEG_PIN6 + TM1729_COM4)
 
-/* RPM → 占空比(%) 查表（线性插值），数据来自实测转速表 */
+/* RPM → 占空比 查表（值存 ×10，线性插值后四舍五入回整数%）
+   数据基于新转速表实测，11000RPM 以上为线性外推 */
 static const uint16_t RpmDutyLUT[][2] = {
-  { 0,     0   },
-  { 5000,  16  },
-  { 5951,  20  },
-  { 6327,  22  },
-  { 6727,  24  },
-  { 7094,  26  },
-  { 7489,  28  },
-  { 7944,  30  },
-  { 8269,  31  },
-  { 8733,  32  },
-  { 9308,  33  },
-  { 9715,  34  },
-  { 10058, 35  },
-  { 11037, 37  },
-  { 12044, 39  },
-  { 13016, 41  },
-  { 13868, 43  },
-  { 14898, 45  },
-  { 15500, 47  },
-  { 16700, 50  },
-  { 18000, 53  },
-  { 19000, 55  },
-  { 25000, 63  },
+  { 0,       0  },
+  { 1000,  115  },  /*  11.5% */
+  { 1800,  135  },  /*  13.5% */
+  { 2800,  160  },  /*  16.0% */
+  { 3800,  185  },  /*  18.5% */
+  { 4200,  195  },  /*  19.5% */
+  { 4600,  205  },  /*  20.5% */
+  { 5000,  215  },  /*  21.5% */
+  { 5550,  225  },  /*  22.5% */
+  { 6000,  240  },  /*  24.0% */
+  { 6700,  255  },  /*  25.5% */
+  { 7200,  265  },  /*  26.5% */
+  { 7800,  280  },  /*  28.0% */
+  { 8300,  295  },  /*  29.5% */
+  { 9000,  310  },  /*  31.0% */
+  { 9300,  320  },  /*  32.0% */
+  { 9500,  325  },  /*  32.5% */
+  { 9800,  330  },  /*  33.0% */
+  { 10200, 340  },  /*  34.0% */
+  { 10400, 345  },  /*  34.5% */
+  { 10600, 350  },  /*  35.0% */
+  { 11000, 360  },  /*  36.0% */
+  /* --- 线性外推: dutyX10 = (245*RPM+905000)/10000, 5000 RPM/s --- */
+  { 12000, 385  },
+  { 13000, 409  },
+  { 14000, 434  },
+  { 15000, 458  },
+  { 16000, 483  },
+  { 17000, 507  },
+  { 18000, 532  },
+  { 19000, 556  },
+  { 20000, 581  },
+  { 21000, 605  },
+  { 22000, 630  },
+  { 23000, 654  },
+  { 24000, 679  },
+  { 25000, 703  },
 };
 #define RPM_DUTY_LUT_ENTRIES (sizeof(RpmDutyLUT) / sizeof(RpmDutyLUT[0]))
 
@@ -786,13 +801,13 @@ static void Task_TM1729(void)
   TM1729_WriteBuffer();
 }
 
-/* RPM → 占空比(%) 查表线性插值 */
+/* RPM → 占空比(%) 查表线性插值（表值 ×10，插值后四舍五入） */
 static uint8_t RpmToDutyPercent(uint16_t rpm)
 {
   uint8_t i;
 
   if (rpm <= RpmDutyLUT[0][0])
-    return (uint8_t)RpmDutyLUT[0][1];
+    return (uint8_t)((RpmDutyLUT[0][1] + 5U) / 10U);
 
   for (i = 1; i < RPM_DUTY_LUT_ENTRIES; i++)
   {
@@ -800,15 +815,18 @@ static uint8_t RpmToDutyPercent(uint16_t rpm)
     {
       uint16_t rLo = RpmDutyLUT[i - 1][0];
       uint16_t rHi = RpmDutyLUT[i][0];
-      uint8_t  dLo = RpmDutyLUT[i - 1][1];
-      uint8_t  dHi = RpmDutyLUT[i][1];
+      uint16_t dLo = RpmDutyLUT[i - 1][1];  /* ×10 */
+      uint16_t dHi = RpmDutyLUT[i][1];       /* ×10 */
 
-      if (rHi == rLo) return dLo;
-      return (uint8_t)(dLo + ((uint32_t)(dHi - dLo) * (rpm - rLo)) / (rHi - rLo));
+      if (rHi == rLo) return (uint8_t)((dLo + 5U) / 10U);
+      {
+        uint16_t dutyX10 = dLo + (uint16_t)(((uint32_t)(dHi - dLo) * (uint32_t)(rpm - rLo)) / (rHi - rLo));
+        return (uint8_t)((dutyX10 + 5U) / 10U);
+      }
     }
   }
 
-  return (uint8_t)RpmDutyLUT[RPM_DUTY_LUT_ENTRIES - 1][1];
+  return (uint8_t)((RpmDutyLUT[RPM_DUTY_LUT_ENTRIES - 1][1] + 5U) / 10U);
 }
 
 static uint16_t GetTargetDutyPermille(void)
