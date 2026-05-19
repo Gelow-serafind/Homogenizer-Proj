@@ -1,9 +1,6 @@
 /*******************************************************************************
-* @copyright: Hangzhou Cloudvoyage Cross-border E-commerce Co., Ltd.
 * @filename:  main.h
 * @brief:     
-* @author:    tiedan
-* @email:    tiedan1026@gmail.com
 * @version:   V1.0/2026.04.19
 *******************************************************************************/
 
