@@ -143,6 +143,11 @@ static uint16_t FlashLastSavedRpm = 0xFFFF;
 
 /* 从后往前扫描，返回最后一个有效转速值；无则返回 0
    仅接受高 16 位为 0 的条目（排除旧版本时间数据等残留） */
+/**
+ * @brief  从 Flash 最后 128 字节页读取上次保存的转速值（从后往前扫描）
+ * @param  None
+ * @return 上次保存的转速值，若无有效数据则返回 0
+ */
 static uint16_t LoadLastRpm(void)
 {
     for (int16_t i = (int16_t)(FLASH_SAVE_SLOTS - 1); i >= 0; i--)
@@ -157,6 +162,11 @@ static uint16_t LoadLastRpm(void)
 }
 
 /* 找第一个空位（低 16 位为 0xFFFF）写入；无空位则擦除整页后写入 slot 0 */
+/**
+ * @brief  将转速值写入 Flash 最后 128 字节页（磨损均衡：找空位写入或擦除整页重写）
+ * @param  rpm: 待保存的转速值
+ * @return None
+ */
 static void SaveRpmToFlash(uint16_t rpm)
 {
     uint8_t i;
@@ -416,6 +426,11 @@ int main(void)
     }
   }
 }
+/**
+ * @brief  编码器轮询任务：读取 EC11 旋转编码器 A/B 相 + 按键，处理正交解码与长短按去抖
+ * @param  None
+ * @return None
+ */
 static void Task_Encoder(void)
 {
   static const int8_t transition[16] =
@@ -514,6 +529,11 @@ static void Task_Encoder(void)
   }
 }
 
+/**
+ * @brief  应用逻辑任务：处理编码器事件、更新目标转速、运行/停止切换、转速平滑 ramp
+ * @param  None
+ * @return None
+ */
 static void Task_App(void)
 {
   int8_t delta = 0;
@@ -612,6 +632,11 @@ static void Task_App(void)
 }
 
 /* PWM任务：在DutyChanged被置位时应用新的占空比 */
+/**
+ * @brief  PWM 任务：当 DutyChanged 置位时计算并应用新的占空比
+ * @param  None
+ * @return None
+ */
 static void Task_PWM(void)
 {
   if (DutyChanged)
@@ -623,6 +648,11 @@ static void Task_PWM(void)
 }
 
 /* UART 命令输入任务：2ms 轮询，接收完整行后解析执行 */
+/**
+ * @brief  解析并执行一条 UART 命令（从 cmdTable 查表匹配）
+ * @param  line: 完整命令行字符串
+ * @return None
+ */
 static void UART_ProcessCommandLine(const char* line)
 {
   const char* p = line;
@@ -646,6 +676,11 @@ static void UART_ProcessCommandLine(const char* line)
   printf("\r\nUnknown: %s\r\n", line);
 }
 
+/**
+ * @brief  轮询 UART 接收寄存器与环形缓冲，提取字符并进行行编辑和命令解析
+ * @param  None
+ * @return None
+ */
 static void UART_PollRx(void)
 {
   /* 将 UART 硬件接收到的字节全部读入环形缓冲 */
@@ -704,6 +739,11 @@ static void UART_PollRx(void)
   }
 }
 
+/**
+ * @brief  UART 命令输入轮询任务（2ms 周期）
+ * @param  None
+ * @return None
+ */
 static void Task_UartCmd(void)
 {
   UART_PollRx();
@@ -711,6 +751,11 @@ static void Task_UartCmd(void)
 
 /* ======================== 命令回调函数实现 ======================== */
 
+/**
+ * @brief  列出所有可用 UART 命令
+ * @param  args: 命令参数（未使用）
+ * @return None
+ */
 static void Cmd_Help(const char* args)
 {
   (void)args;
@@ -721,6 +766,11 @@ static void Cmd_Help(const char* args)
   }
 }
 
+/**
+ * @brief  通过 UART 设置目标转速（speed 命令回调）
+ * @param  args: 转速值字符串
+ * @return None
+ */
 static void Cmd_SetSpeed(const char* args)
 {
   int val = 0;
@@ -738,6 +788,11 @@ static void Cmd_SetSpeed(const char* args)
   printf("\r\nSpeed set to %u RPM\r\n", (unsigned)ConfigRpm);
 }
 
+/**
+ * @brief  通过 UART 启动电机（start 命令回调）
+ * @param  args: 命令参数（未使用）
+ * @return None
+ */
 static void Cmd_Start(const char* args)
 {
   (void)args;
@@ -749,6 +804,11 @@ static void Cmd_Start(const char* args)
   }
 }
 
+/**
+ * @brief  通过 UART 暂停电机（pause 命令回调）
+ * @param  args: 命令参数（未使用）
+ * @return None
+ */
 static void Cmd_Pause(const char* args)
 {
   (void)args;
@@ -761,6 +821,11 @@ static void Cmd_Pause(const char* args)
   }
 }
 
+/**
+ * @brief  打印当前系统状态（模式、目标转速、实际转速、占空比）
+ * @param  args: 命令参数（未使用）
+ * @return None
+ */
 static void Cmd_Status(const char* args)
 {
   (void)args;
@@ -774,6 +839,11 @@ static void Cmd_Status(const char* args)
 }
 
 /* TM1729 显示任务：50ms 刷新一次显示缓冲 */
+/**
+ * @brief  TM1729 LCD 显示任务：50ms 周期刷新显示缓冲（停止时显示目标转速，运行时显示实际转速）
+ * @param  None
+ * @return None
+ */
 static void Task_TM1729(void)
 {
   uint16_t rpmToShow;
@@ -788,6 +858,11 @@ static void Task_TM1729(void)
 }
 
 /* RPM → 占空比(%) 查表线性插值（表值 ×10，插值后四舍五入） */
+/**
+ * @brief  将 RPM 转速通过查表线性插值转换为 PWM 占空比百分比
+ * @param  rpm: 电机转速（RPM）
+ * @return 占空比百分比（0-100）
+ */
 static uint8_t RpmToDutyPercent(uint16_t rpm)
 {
   uint8_t i;
@@ -815,6 +890,11 @@ static uint8_t RpmToDutyPercent(uint16_t rpm)
   return (uint8_t)((RpmDutyLUT[RPM_DUTY_LUT_ENTRIES - 1][1] + 5U) / 10U);
 }
 
+/**
+ * @brief  根据应用模式和实际转速计算目标 PWM 占空比（千分比）
+ * @param  None
+ * @return 占空比千分比（0-1000，1000 表示电机停转）
+ */
 static uint16_t GetTargetDutyPermille(void)
 {
   if (AppMode == APP_MODE_RUNNING)
@@ -825,6 +905,11 @@ static uint16_t GetTargetDutyPermille(void)
   return PWM_INACTIVE_PERMILLE;
 }
 
+/**
+ * @brief  返回应用模式枚举对应的可读字符串名称
+ * @param  mode: 应用模式（APP_MODE_STOPPED / APP_MODE_RUNNING）
+ * @return 模式名称字符串
+ */
 static const char* GetModeName(AppMode_t mode)
 {
   if (mode == APP_MODE_RUNNING)
@@ -853,6 +938,11 @@ static void EC11_Config(void)
   GPIO_Init(EC11_GPIO_PORT, &GPIO_InitStructure);
 }
 
+/**
+ * @brief  TM1729 位操作短延时（软件空循环）
+ * @param  None
+ * @return None
+ */
 static void TM1729_ShortDelay(void)
 {
   for (volatile uint32_t i = 0; i < 32U; ++i)
@@ -860,6 +950,11 @@ static void TM1729_ShortDelay(void)
   }
 }
 
+/**
+ * @brief  TM1729 I2C 类通信起始条件：SCL 高时 SDA 下降沿
+ * @param  None
+ * @return None
+ */
 static void TM1729_Start(void)
 {
   GPIO_WriteBit(TM1729_GPIO_PORT, TM1729_PIN_SDA, Bit_SET);
@@ -870,6 +965,11 @@ static void TM1729_Start(void)
   GPIO_WriteBit(TM1729_GPIO_PORT, TM1729_PIN_SCL, Bit_RESET);
 }
 
+/**
+ * @brief  TM1729 I2C 类通信停止条件：SCL 高时 SDA 上升沿
+ * @param  None
+ * @return None
+ */
 static void TM1729_Stop(void)
 {
   GPIO_WriteBit(TM1729_GPIO_PORT, TM1729_PIN_SCL, Bit_SET);
@@ -881,6 +981,11 @@ static void TM1729_Stop(void)
   GPIO_WriteBit(TM1729_GPIO_PORT, TM1729_PIN_SCL, Bit_RESET);
 }
 
+/**
+ * @brief  向 TM1729 发送一个字节（位操作模拟串行时序，MSB 优先）
+ * @param  dat: 待发送的字节
+ * @return None
+ */
 static void TM1729_SendByte(uint8_t dat)
 {
   for (uint8_t i = 0U; i < 8U; ++i)
@@ -908,18 +1013,34 @@ static void TM1729_SendByte(uint8_t dat)
   GPIO_WriteBit(TM1729_GPIO_PORT, TM1729_PIN_SCL, Bit_RESET);
 }
 
+/**
+ * @brief  设置 TM1729 显示缓冲中的指定位
+ * @param  bit: 位编号（0-34，对应 LCD_NumPos 中的位位置）
+ * @return None
+ */
 static void TM1729_SetBit(uint8_t bit)
 {
   uint8_t tmp = (uint8_t)(7U - (bit % 8U));
   TM1729_BitBuf[bit / 8U] |= (uint8_t)(1U << tmp);
 }
 
+/**
+ * @brief  清除 TM1729 显示缓冲中的指定位
+ * @param  bit: 位编号（0-34，对应 LCD_NumPos 中的位位置）
+ * @return None
+ */
 static void TM1729_ClrBit(uint8_t bit)
 {
   uint8_t tmp = (uint8_t)(7U - (bit % 8U));
   TM1729_BitBuf[bit / 8U] &= (uint8_t)(~(1U << tmp));
 }
 
+/**
+ * @brief  在 TM1729 显示缓冲的指定数码管位置设置数字
+ * @param  idx: 数码管索引（0-4）
+ * @param  num: 要显示的数字（0-9），16 为空白
+ * @return None
+ */
 static void TM1729_SetNumAt(uint8_t idx, uint8_t num)
 {
   uint8_t seg = TM1729_NumModel[(num <= 16U) ? num : 16U];
@@ -943,6 +1064,14 @@ static void TM1729_SetNumAt(uint8_t idx, uint8_t num)
   }
 }
 
+/**
+ * @brief  在 LCD 上显示 4 位数字（清除缓冲后写入）
+ * @param  d3: 千位数字
+ * @param  d2: 百位数字
+ * @param  d1: 十位数字
+ * @param  d0: 个位数字
+ * @return None
+ */
 static void TM1729_Show4Digits(uint8_t d3, uint8_t d2, uint8_t d1, uint8_t d0)
 {
   memset(TM1729_BitBuf, 0, sizeof(TM1729_BitBuf));
@@ -953,6 +1082,11 @@ static void TM1729_Show4Digits(uint8_t d3, uint8_t d2, uint8_t d1, uint8_t d0)
   TM1729_SetNumAt(3U, d0);
 }
 
+/**
+ * @brief  控制 LCD 上 RPM 单位指示段的显示/隐藏
+ * @param  enable: 非 0 显示，0 隐藏
+ * @return None
+ */
 static void TM1729_SetRpmIndicator(uint8_t enable)
 {
   if (enable != 0U)
@@ -965,6 +1099,13 @@ static void TM1729_SetRpmIndicator(uint8_t enable)
   }
 }
 
+/**
+ * @brief  在 LCD 指定数码管范围内显示数值（右对齐，高位消隐）
+ * @param  value: 待显示数值
+ * @param  firstIdx: 起始数码管索引（0-4）
+ * @param  lastIdx: 结束数码管索引（0-4，需 >= firstIdx）
+ * @return None
+ */
 static void TM1729_ShowValueOnRange(uint16_t value, uint8_t firstIdx, uint8_t lastIdx)
 {
   uint8_t i;
@@ -998,6 +1139,11 @@ static void TM1729_ShowValueOnRange(uint16_t value, uint8_t firstIdx, uint8_t la
   }
 }
 
+/**
+ * @brief  将显示缓冲通过 TM1729 写入 LCD 硬件
+ * @param  None
+ * @return None
+ */
 static void TM1729_WriteBuffer(void)
 {
   TM1729_Start();
@@ -1010,6 +1156,11 @@ static void TM1729_WriteBuffer(void)
   TM1729_Stop();
 }
 
+/**
+ * @brief  初始化 TM1729 通信 GPIO 引脚（PC6/PC7 推挽输出）
+ * @param  None
+ * @return None
+ */
 static void TM1729_PortInit(void)
 {
   GPIO_InitTypeDef GPIO_InitStructure;
@@ -1024,6 +1175,11 @@ static void TM1729_PortInit(void)
   GPIO_Init(TM1729_GPIO_PORT, &GPIO_InitStructure);
 }
 
+/**
+ * @brief  TM1729 LCD 驱动初始化：GPIO 配置、发送 IC 设置指令、显示测试图案
+ * @param  None
+ * @return None
+ */
 static void TM1729_Init(void)
 {
   TM1729_PortInit();
@@ -1049,6 +1205,11 @@ static void TM1729_Init(void)
   TM1729_WriteBuffer();
 }
 
+/**
+ * @brief  LCD 演示更新：停止时显示 1111，运行时显示 3333
+ * @param  mode: 应用模式
+ * @return None
+ */
 static void TM1729_DemoUpdate(AppMode_t mode)
 {
   /* 状态机演示码：STOPPED/RUNNING -> 1111/3333 */
