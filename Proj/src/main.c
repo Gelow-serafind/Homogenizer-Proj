@@ -25,7 +25,7 @@
 #define RPM_STEP_NORMAL   1000U    /* 旋钮分度值 */
 #define RPM_RAMP_STEP     50U      /* 每10ms平滑步进（5000 RPM/s） */
 #define RPM_MAX           20000U   /* 最大显示转速 */
-#define PWM_INACTIVE_PERMILLE 1000U
+#define PWM_INACTIVE_PERMILLE 0U     /* 停机时 0% 占空比，电机停转 */
 #define LONG_PRESS_MS          2000U
 #define KEY_DEBOUNCE_TICKS     3U
 
@@ -893,14 +893,14 @@ static uint8_t RpmToDutyPercent(uint16_t rpm)
 /**
  * @brief  根据应用模式和实际转速计算目标 PWM 占空比（千分比）
  * @param  None
- * @return 占空比千分比（0-1000，1000 表示电机停转）
+ * @return 占空比千分比（0-1000，0 表示电机停转，1000 表示满功率）
  */
 static uint16_t GetTargetDutyPermille(void)
 {
   if (AppMode == APP_MODE_RUNNING)
   {
     uint8_t dutyPct = RpmToDutyPercent(MotorRpm);
-    return (uint16_t)(100U - dutyPct) * 10U;
+    return (uint16_t)dutyPct * 10U;
   }
   return PWM_INACTIVE_PERMILLE;
 }
@@ -1291,12 +1291,12 @@ static void TIM1_PWM_Config(void)
   TIM_TimeBaseStructure.TIM_RepetitionCounter = 0;
   TIM_TimeBaseInit(TIM1, &TIM_TimeBaseStructure);
 
-  /* Match official TIM_7PWMOutputs OC mode/polarity style */
-  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM2;
+  /* PWM 直出模式：PWM1 + PolarityHigh，CNT<CCR→HIGH=ON，占空比=CCR/ARR */
+  TIM_OCInitStructure.TIM_OCMode = TIM_OCMode_PWM1;
   TIM_OCInitStructure.TIM_OutputState = TIM_OutputState_Enable;
   TIM_OCInitStructure.TIM_OutputNState = TIM_OutputNState_Enable;
   TIM_OCInitStructure.TIM_Pulse = 0;  /* Initial 0% duty cycle */
-  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_Low;
+  TIM_OCInitStructure.TIM_OCPolarity = TIM_OCPolarity_High;
   TIM_OCInitStructure.TIM_OCNPolarity = TIM_OCNPolarity_High;
   TIM_OCInitStructure.TIM_OCIdleState = TIM_OCIdleState_Set;
   TIM_OCInitStructure.TIM_OCNIdleState = TIM_OCNIdleState_Reset;
